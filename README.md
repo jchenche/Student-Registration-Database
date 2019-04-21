@@ -1,6 +1,6 @@
 # Student Registration Database
 
-- A full-fledge database for student registration.
+- A full-fledged database for student registration.
 - Grade acquired: 100%.
 - Tools used: RDBMS, PostgreSQL, DBeaver, Python3.
 - Python3 was used for testing, but I can't upload them because some were written by the professor.
