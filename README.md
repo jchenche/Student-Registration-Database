@@ -1,4 +1,4 @@
-# Student-Registration-Database
+# Student Registration Database
 
 - A full-fledge database for student registration.
 - Grade acquired: 100%.
