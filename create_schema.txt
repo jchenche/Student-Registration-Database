@@ -1,0 +1,176 @@
+-- Jimmy Chen Chen
+-- CSC370
+
+rollback;
+drop table if exists grades;
+drop table if exists enrollments;
+drop table if exists prerequisites;
+drop table if exists course_offerings;
+drop table if exists courses;
+drop table if exists students;
+drop function if exists student_id_ignore_duplicates();
+drop function if exists enrollment_constraint();
+drop function if exists prerequisites_constraint();
+drop function if exists courses_ignore_duplicates();
+---------------------------------------------------------------------------------
+create table students(
+	student_id varchar(9) primary key,
+	student_name varchar(225),
+	check(length(student_name) > 0) );
+
+create table courses(
+	course_code varchar(10) primary key );
+	
+create table course_offerings(
+	course_code varchar(10),
+	course_name varchar(128),
+	term_code varchar(6),
+	instructor varchar(255),
+	max_capacity integer,
+	check(length(course_name) > 0),
+	check(max_capacity >= 0),
+	check(length(instructor) > 0),
+	primary key (course_code, term_code),
+	foreign key (course_code) references courses(course_code)
+		on delete restrict
+		on update cascade
+		deferrable );
+
+create table prerequisites(
+	course_code varchar(10),
+	term_code varchar(6),
+	prereq_course_code varchar(10),
+	primary key (course_code, term_code, prereq_course_code),
+	foreign key (course_code, term_code) references course_offerings(course_code, term_code)
+		on delete cascade
+		on update cascade
+		deferrable,
+	foreign key (prereq_course_code) references courses(course_code)
+		on delete cascade
+		on update cascade
+		deferrable );
+
+create table enrollments(
+	student_id varchar(9),
+	course_code varchar(10),
+	term_code varchar(6),
+	primary key (student_id, course_code, term_code),
+	foreign key (student_id) references students(student_id)
+		on delete cascade
+		on update cascade
+		deferrable,
+	foreign key (course_code, term_code) references course_offerings(course_code, term_code)
+		on delete cascade
+		on update cascade
+		deferrable );
+
+create table grades(
+	student_id varchar(9),
+	course_code varchar(10),
+	term_code varchar(6),
+	grade integer,
+	check(grade >= 0 and grade <= 100),
+	primary key (student_id, course_code, term_code),
+	foreign key (student_id, course_code, term_code) references enrollments(student_id, course_code, term_code)
+		on delete restrict
+		on update cascade
+		deferrable );
+
+---------------------------------------------------------------------------------
+create function student_id_ignore_duplicates()
+returns trigger as
+$BODY$
+begin
+if (select count(*) from students where student_id = new.student_id) > 0
+then
+	if (select student_name from students where student_id = new.student_id) != new.student_name
+	then
+		raise exception 'Student ID does not match the student name in the database';
+	end if;
+	return NULL;
+end if;
+return new;
+end
+$BODY$
+language plpgsql;
+
+create trigger student_id_ignore_duplicates_trigger
+	before insert or update on students
+	for each row
+	execute procedure student_id_ignore_duplicates();
+
+---------------------------------------------------------------------------------
+create function enrollment_constraint()
+returns trigger as
+$BODY$
+declare num_prereq integer;
+begin
+if (select count(*) from enrollments where course_code = new.course_code and term_code = new.term_code)
+	> (select max_capacity from course_offerings where course_code = new.course_code and term_code = new.term_code)
+then
+	raise exception 'This course_offering is currently full';
+end if;
+	num_prereq := (select count(*) from prerequisites where course_code = new.course_code and term_code = new.term_code);
+if ((num_prereq) = 0
+	 or (select count(*) from (select distinct E.course_code from
+									(enrollments as E
+									inner join
+									 prerequisites as P
+									on E.course_code = P.prereq_course_code)
+									left outer join
+									 grades as G
+									on E.student_id = G.student_id and E.course_code = G.course_code and E.term_code = G.term_code 
+									where E.student_id = new.student_id and P.course_code = new.course_code and P.term_code = new.term_code
+									and E.term_code < P.term_code and (grade is null or grade >= 50)) as X) = num_prereq
+	) = false
+then
+	raise exception 'This student has not satisfied the prerequisites';
+end if;
+return new;
+end
+$BODY$
+language plpgsql;
+
+create constraint trigger enrollment_constraint_trigger
+	after insert or update on enrollments
+	deferrable
+	for each row
+	execute procedure enrollment_constraint();
+
+---------------------------------------------------------------------------------
+create function prerequisites_constraint()
+returns trigger as
+$BODY$
+begin
+if (select count(*) from course_offerings where course_code = new.prereq_course_code) = 0
+then
+	raise 'This prerequisite does not have an offering';
+end if;
+return new;
+end
+$BODY$
+language plpgsql;
+
+create trigger prerequisites_constraint_trigger
+	before insert or update on prerequisites
+	for each row
+	execute procedure prerequisites_constraint();
+
+---------------------------------------------------------------------------------
+create function courses_ignore_duplicates()
+returns trigger as
+$BODY$
+begin
+if (select count(*) from courses where course_code = new.course_code) > 0
+then
+	return NULL;
+end if;
+return new;
+end 
+$BODY$
+language plpgsql;
+
+create trigger courses_ignore_duplicates_trigger
+	before insert or update on courses
+	for each row
+	execute procedure courses_ignore_duplicates();
